@@ -33,18 +33,23 @@ main:
         addi s11, x0, 3  # data number(s11)
         la s9, exp_mask  # global exp(s9)
         la s8, man_mask  # global man(s8)
-        la s7, sign_exp_mask # global sign_exp(s7)
         la s6, bf16_mask  # global bf16(s6)
         lw s9, 0(s9)
         lw s8, 0(s8)
-        lw s7, 0(s7)
         lw s6, 0(s6)
-        
-main_for:        
+        add s7, x0, sp
+main_for:
+        la a0, bf16_string
+        addi a7, x0, 4
+        ecall         
         addi a3, x0, 7  # array size(a3)
-        lw a1, 0(sp)  # array_data pointer(a1)
+        lw a1, 0(s7)  # array_data pointer(a1)
         mv a2, s10  # array_bf16 pointer(a2)
         jal ra, fp32_to_bf16_findmax
+               
+        addi s11, s11, -1
+        addi s7, s7, 4
+        bne s11, x0, main_for
         # Exit program
         li a7, 10
         ecall 
@@ -58,10 +63,10 @@ fp32_to_bf16_findmax:
         
 # array loop
 for1:
-        lw a0, 0(a1)  # x(a0)
+        lw a5, 0(a1)  # x(a5)
         # fp32_to_bf16
-        and t0, a0, s9  # x exp(t0)
-        and t1, a0, s8  # x man(t1)
+        and t0, a5, s9  # x exp(t0)
+        and t1, a5, s8  # x man(t1)
         # if zero        
         bne t0, x0, else
         # exp is zero
@@ -69,7 +74,7 @@ for1:
         j finish_bf16        
 else: 
         # if infinity or NaN
-        beq t0, s3, finish_bf16                              
+        beq t0, s9, finish_bf16                              
         # round        
         # r = x.man shift right 8 bit
         # x+r = x.man + x.man>>8
@@ -79,40 +84,46 @@ else:
         add t1, t1, t2  # x+r
         
         # check carry
-        and t4, t1, t3  # check No.24bit (t3), 0:carry, 1: nocarry
+        and t4, t1, t3  # check No.24bit (t4), 0:carry, 1: nocarry
         bne t4, x0, no_carry
-        addi t0, t0, 1  # exp+1
+        add t0, t0, t3  # exp+1
         srli t1 ,t1, 1  # man alignment
 no_carry:
-        slli t0, t0, 23  # exp shift
         and t0, t0, s9  # mask exp(t0)
         and t1, t1, s8  # mask man(t1)
         or t2, t0, t1  # combine exp & man
         li t3, 0x80000000  # sign mask
-        and t3, t6, t3  # x sign
-        or a0, t3, t2  # bfloat16(a0)                
-
+        and t3, a5, t3  # x sign
+        or a5, t3, t2  # bfloat16(a5) 
+        and a5, a5, s6
 finish_bf16:
+        sw a5, 0(a2)
         
-        sw a0, 0(a2)                                  #
+        mv a0, a5
+        addi a7, x0, 34
+        ecall
+        la a0, next_line
+        addi a7, x0, 4
+        ecall
+        
         slti t3, a3, 7  # (a3==7) t3=0, (a3<7) t3=1
-        beq a3, x0, compare
+        bne t3, x0, compare
         # saved first max
-        mv s0, t0  # max exp(s0)
-        mv s1, t1  # max man(s1) 
         j max_change
         
 compare:
         # compare exp
-        blt s0, t0, max_change  # t5(max.exp)<t6(next.exp) branch
+        blt s0, t0, max_change 
         blt t0, s0, max_not_change
         
         # compare man       
         blt s1, t1, max_change
         blt t1, s1, max_not_change
 
-max_change:        
-        mv a4, t6
+max_change:
+        mv s0, t0  # max exp(s0)
+        mv s1, t1  # max man(s1)         
+        mv a4, a5  # max bf16(a4)
 max_not_change:               
         addi a3, a3, -1
         addi a1, a1, 4
@@ -121,7 +132,15 @@ max_not_change:
         
         # Absolute
         li t2, 0x7fffffff
-        and a4, a4, t2         
+        and a4, a4, t2
+        
+        #print
+        la a0, max_string
+        addi a7, x0, 4
+        ecall
+        mv a0, a4
+        addi a7, x0, 34
+        ecall
      
         # epilogue
         lw s0, 0(sp)
